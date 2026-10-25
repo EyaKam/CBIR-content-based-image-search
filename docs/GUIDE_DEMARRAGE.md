@@ -274,11 +274,10 @@ curl localhost:8000/api/info               # les bases chargées, leurs descript
 > **PowerShell** : `curl` y est un alias de `Invoke-WebRequest`. Écrivez `curl.exe` pour les commandes de ce
 > guide (ou utilisez Git Bash).
 
-Mesures de qualité et de vitesse (rapport) :
+Mesures de qualité et de vitesse sur la base Objects (précision, rappel, AP, VP-tree contre recherche exhaustive) :
 
 ```bash
-python scripts/evaluate.py --queries 200 --out results    # précision / rappel / VP-tree sur Objects
-python rapport/collect_data.py                             # VP-tree contre exhaustif sur 1 000 000 d'images
+python scripts/evaluate.py --queries 200 --out results
 ```
 
 Documentation interactive de l'API : **http://localhost:8000/docs**.
@@ -311,7 +310,7 @@ rm -rf index index_1m                   # supprime les signatures (puis refaites
 
 ## 7. Ce qui est versionné et ce qui ne l'est pas
 
-Le dépôt contient le **code**, la configuration Docker/Logstash, le rapport (`rapport/`) et ce guide.
+Le dépôt contient le **code**, la configuration Docker/Logstash, les tests, le README et ce guide.
 `.gitignore` exclut tout ce qui se reconstruit avec les commandes ci-dessus : `data/` (images et archives),
 `index/` et `index_1m/` (signatures), `.venv/`.
 
