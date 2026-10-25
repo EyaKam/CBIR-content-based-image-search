@@ -1,0 +1,15 @@
+numpy
+opencv-python-headless
+scikit-image
+scipy
+matplotlib
+Pillow
+fastapi
+uvicorn
+python-multipart
+requests
+# VGG16 deep descriptor (the one the reference project uses). Use tensorflow-cpu if you have no GPU.
+tensorflow
+# tests
+pytest
+httpx

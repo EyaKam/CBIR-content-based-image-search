@@ -1,0 +1,8 @@
+data/
+index/
+results/
+__pycache__/
+*.pyc
+index_1m/
+.venv/
+tests/__pycache__/

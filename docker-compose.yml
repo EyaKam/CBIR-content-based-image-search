@@ -1,0 +1,63 @@
+# Full stack:  Elasticsearch (keywords + image metadata)  <-  Logstash (CSV ingestion)
+#              cbir (FastAPI + web page + signatures/VP-tree)
+#
+#   docker compose up -d elasticsearch
+#   python scripts/create_es_indices.py                      # mappings
+#   python scripts/make_objects_csv.py --index index         # index/objects.csv
+#   docker compose run --rm logstash -f /usr/share/logstash/pipeline/objects.conf
+#   docker compose run --rm logstash -f /usr/share/logstash/pipeline/mirflickr.conf
+#   docker compose up -d --build cbir                        # http://localhost:8000
+services:
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.15.3
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - ES_JAVA_OPTS=-Xms1g -Xmx1g
+    ports:
+      - "9200:9200"
+    volumes:
+      - esdata:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s http://localhost:9200/_cluster/health | grep -qE '\"status\":\"(green|yellow)\"'"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+  logstash:
+    image: docker.elastic.co/logstash/logstash:8.15.3
+    profiles: ["ingest"]            # only runs with `docker compose run`, never with `up`
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    environment:
+      - LS_JAVA_OPTS=-Xms512m -Xmx1g
+      - XPACK_MONITORING_ENABLED=false
+    volumes:
+      - ./logstash/pipeline:/usr/share/logstash/pipeline:ro
+      - ./index:/data/objects:ro
+      - ./index_1m:/data/mirflickr:ro
+
+  cbir:
+    build: .
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    environment:
+      - CBIR_ES_URL=http://elasticsearch:9200
+      - CBIR_INDEX_DIR=/app/index
+      - CBIR_INDEX_1M_DIR=/app/index_1m
+      - CBIR_IMAGE_ROOT=/data/Objects
+      - CBIR_MIRFLICKR_RAW=/data/mirflickr_raw
+    volumes:
+      - ./data/Objects:/data/Objects:ro          # Objects images (one sub-folder per class)
+      - ./data/mirflickr_raw:/data/mirflickr_raw:ro   # thumbs*.zip are read from here
+      - ./index:/app/index                       # Objects signatures + meta.json
+      - ./index_1m:/app/index_1m                 # MIRFLICKR signatures + meta.json
+      - keras-cache:/root/.keras                 # VGG16 weights, downloaded once (~530 MB)
+
+volumes:
+  esdata:
+  keras-cache:

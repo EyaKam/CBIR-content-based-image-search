@@ -1,0 +1,18 @@
+# --- environment
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+rapport/node_modules/
+rapport/package-lock.json
+
+# --- data and generated signatures (too big for GitHub: docs/GUIDE_DEMARRAGE.md explains how to rebuild them)
+data/*
+!data/.gitkeep
+index/*
+!index/.gitkeep
+index_1m/
+index_test/
+
+# --- Word temporary files
+~$*.docx

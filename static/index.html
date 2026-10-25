@@ -1,0 +1,299 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Image retrieval by content</title>
+<style>
+  :root{
+    --bg:#e8ecee; --sheet:#f9fafa; --ink:#101820; --mute:#5a6872; --rule:#c5ced3;
+    --blue:#2438c9; --bar:#2b3a45; --warn:#a4380f;
+    --serif:"Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif;
+    --sans:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  }
+  *{box-sizing:border-box}
+  [hidden]{display:none !important}
+  html,body{margin:0}
+  body{background:var(--bg);color:var(--ink);font:15px/1.45 var(--sans)}
+  button,input,select{font:inherit;color:inherit}
+  :focus-visible{outline:2px solid var(--blue);outline-offset:2px}
+
+  .app{display:grid;grid-template-columns:340px 1fr;min-height:100vh}
+  aside{background:var(--sheet);border-right:1px solid var(--rule);padding:28px 24px 40px;position:sticky;top:0;height:100vh;overflow:auto}
+  main{padding:28px 32px 60px;min-width:0}
+
+  h1{font:600 26px/1.15 var(--serif);margin:0 0 4px;letter-spacing:-.01em}
+  .sub{color:var(--mute);margin:0 0 26px;font-size:13.5px}
+  h2{font:600 16px var(--serif);margin:26px 0 10px;padding-top:18px;border-top:1px solid var(--rule)}
+  label.f{display:block;font-size:13px;color:var(--mute);margin:10px 0 4px}
+
+  input[type=text],select,input[type=number]{width:100%;padding:8px 10px;border:1px solid var(--rule);background:#fff;border-radius:3px}
+  .seg{display:inline-flex;border:1px solid var(--rule);border-radius:3px;overflow:hidden;background:#fff}
+  .seg button{border:0;background:none;padding:6px 12px;cursor:pointer;font-size:13px}
+  .seg button[aria-pressed=true]{background:var(--ink);color:#fff}
+  .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+
+  .drop{border:1.5px dashed var(--rule);border-radius:3px;padding:14px;text-align:center;color:var(--mute);cursor:pointer;background:#fff;font-size:13.5px}
+  .drop.over{border-color:var(--blue);color:var(--blue)}
+  .qbox{display:flex;gap:12px;align-items:center;margin-top:10px}
+  .qbox img{width:64px;height:64px;object-fit:cover;border:3px solid var(--blue)}
+  .qbox button{border:0;background:none;color:var(--warn);cursor:pointer;text-decoration:underline;padding:0}
+
+  .desc{display:grid;grid-template-columns:112px 1fr 26px;gap:4px 10px;align-items:center;padding:6px 0}
+  .desc small{grid-column:1/4;color:var(--mute);font-size:12px;margin-top:-4px}
+  .desc output{font-variant-numeric:tabular-nums;text-align:right;color:var(--mute);font-size:13px}
+  input[type=range]{accent-color:var(--ink);width:100%}
+  .desc.off{opacity:.38}
+  .desc.off *{cursor:not-allowed}
+  .drop.off{opacity:.5;cursor:not-allowed}
+  .tags{font-size:11.5px;color:var(--mute);margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+  .go{margin-top:22px;width:100%;padding:11px;border:0;background:var(--blue);color:#fff;font-weight:600;letter-spacing:.01em;cursor:pointer;border-radius:3px}
+  .go:hover{background:#1b2ca3}
+  .go:disabled{opacity:.6;cursor:progress}
+
+  .head{display:flex;justify-content:space-between;align-items:baseline;gap:16px;flex-wrap:wrap;border-bottom:1px solid var(--rule);padding-bottom:10px;margin-bottom:20px}
+  .head h2{border:0;margin:0;padding:0;font-size:20px}
+  .stats{color:var(--mute);font-size:13px;font-variant-numeric:tabular-nums}
+  .stats b{color:var(--ink);font-weight:600}
+
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:14px}
+  .tile{background:var(--sheet);border:1px solid var(--rule);padding:0;text-align:left;cursor:pointer;display:block;width:100%}
+  .tile:hover{border-color:var(--ink)}
+  .tile .im{aspect-ratio:4/3;background:#d5dbdf;overflow:hidden}
+  .tile img{width:100%;height:100%;object-fit:cover;display:block}
+  .tile .meta{padding:7px 9px 9px}
+  .tile .top{display:flex;justify-content:space-between;font-size:12.5px;gap:6px}
+  .tile .rank{font-variant-numeric:tabular-nums;color:var(--mute)}
+  .tile .lab{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .bar{height:4px;background:#dde3e6;margin-top:6px}
+  .bar i{display:block;height:100%;background:var(--bar)}
+  .tile .d{font-size:11.5px;color:var(--mute);margin-top:3px;font-variant-numeric:tabular-nums}
+  .tile.q{border:3px solid var(--blue)}
+  .tile.q .rank{color:var(--blue);font-weight:600}
+
+  .empty{color:var(--mute);padding:40px 0;max-width:46ch;font-family:var(--serif);font-size:18px;line-height:1.5}
+  .pick{margin-top:40px}
+  .pick .grid{grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:8px}
+  .pick .tile .im{aspect-ratio:1}
+  .pick .tile{border-color:transparent}
+  .err{color:var(--warn);margin:12px 0}
+
+  @media (max-width:860px){
+    .app{grid-template-columns:1fr}
+    aside{position:static;height:auto;border-right:0;border-bottom:1px solid var(--rule)}
+    main{padding:20px 16px 50px}
+  }
+  @media (prefers-reduced-motion:no-preference){ .tile{transition:border-color .12s} }
+</style>
+</head>
+<body>
+<div class="app">
+  <aside>
+    <h1>Search by what's in the picture</h1>
+    <p class="sub" id="base">Loading index…</p>
+
+    <label class="f" for="basesel">Image base</label>
+    <select id="basesel"></select>
+
+    <label class="f" for="kw">Keywords (class names or tags)</label>
+    <input type="text" id="kw" placeholder="e.g. butterfly, airplanes" autocomplete="off">
+    <div class="row" style="margin-top:8px">
+      <span class="seg" id="kwmode" role="group" aria-label="Keyword mode">
+        <button type="button" data-v="and" aria-pressed="true">all words</button>
+        <button type="button" data-v="or" aria-pressed="false">any word</button>
+      </span>
+    </div>
+
+    <h2>Query image</h2>
+    <div class="drop" id="drop" tabindex="0" role="button">Drop an image here or click to upload</div>
+    <input type="file" id="file" accept="image/*" hidden>
+    <div class="qbox" id="qbox" hidden>
+      <img id="qimg" alt="query">
+      <div><div id="qname" style="font-size:13px"></div><button type="button" id="qclear">remove</button></div>
+    </div>
+    <div id="combwrap" hidden>
+      <label class="f">Keywords and image are combined with</label>
+      <span class="seg" id="combine" role="group">
+        <button type="button" data-v="and" aria-pressed="true">AND (filter)</button>
+        <button type="button" data-v="or" aria-pressed="false">OR (union)</button>
+      </span>
+    </div>
+
+    <h2>Descriptors</h2>
+    <p class="sub" style="margin:0 0 6px;font-size:12.5px">Descriptors of different bases cannot be combined: ticking one greys out the others.</p>
+    <div id="descs"></div>
+
+    <label class="f" for="metric">Distance</label>
+    <select id="metric">
+      <option value="default">Best per descriptor (χ² / L2)</option>
+      <option value="l1">L1 (Manhattan)</option>
+      <option value="l2">L2 (Euclidean)</option>
+      <option value="chi2">χ² (chi-squared)</option>
+    </select>
+
+    <div class="row" style="margin-top:12px;align-items:end">
+      <div style="flex:1"><label class="f" for="k">Results</label><input type="number" id="k" value="20" min="1" max="200"></div>
+      <div style="flex:2"><label class="f" for="method">Search method</label>
+        <select id="method"><option value="vptree">VP-tree (index)</option><option value="brute">Brute force</option></select></div>
+    </div>
+
+    <button class="go" id="go">Search</button>
+  </aside>
+
+  <main>
+    <div id="out"><p class="empty">Pick an image below, upload your own, or type a keyword. The most similar images appear here, closest first. Click any result to search again from it.</p></div>
+    <section class="pick">
+      <div class="head" style="margin-bottom:12px">
+        <h2 style="font-size:17px">Pick a query from the base</h2>
+        <div class="row"><select id="cls" style="width:auto"></select>
+          <button class="seg" style="padding:6px 12px;cursor:pointer;border:1px solid var(--rule);background:#fff" id="shuffle" type="button">Shuffle</button></div>
+      </div>
+      <div class="grid" id="pickgrid"></div>
+    </section>
+  </main>
+</div>
+
+<script>
+const $ = s => document.querySelector(s);
+const state = {id:null, file:null, info:null, kwmode:'and', combine:'and', base:'objects'};
+const DEFAULT_DESCS = {objects:['hsv','lbp','hog'], mirflickr:['ehd']};
+const img = (id, w) => `/img/${state.base}/${id}?w=${w}`;
+
+function seg(id, key){
+  $(id).addEventListener('click', e=>{
+    const b = e.target.closest('button'); if(!b) return;
+    state[key] = b.dataset.v;
+    $(id).querySelectorAll('button').forEach(x=>x.setAttribute('aria-pressed', x===b));
+  });
+}
+seg('#kwmode','kwmode'); seg('#combine','combine');
+
+async function init(){
+  state.info = await (await fetch('/api/info')).json();
+  const i = state.info, bases = i.bases;
+  $('#base').textContent = Object.values(bases).map(b=>`${b.n_images.toLocaleString()} images · ${b.title}`).join('  |  ');
+  $('#basesel').innerHTML = Object.entries(bases).map(([k,b])=>`<option value="${k}">${b.title}</option>`).join('');
+  state.base = bases.objects ? 'objects' : Object.keys(bases)[0];
+  $('#basesel').value = state.base;
+  $('#descs').innerHTML = Object.entries(i.descriptors).map(([d,m])=>{
+    const on = (DEFAULT_DESCS[m.base]||[]).includes(d) && m.base===state.base ? 'checked':'';
+    return `<div class="desc" data-base="${m.base}"><label><input type="checkbox" data-d="${d}" ${on}> ${m.title}</label>
+      <input type="range" min="0" max="5" step="0.5" value="1" data-w="${d}" aria-label="${m.title} weight">
+      <output>1</output><small>${m.note} · ${bases[m.base].title}</small></div>`;
+  }).join('');
+  document.querySelectorAll('[data-w]').forEach(r=>r.addEventListener('input',()=>r.nextElementSibling.textContent=r.value));
+  $('#descs').addEventListener('change', e=>{ if(e.target.dataset.d) refreshDescs(); });
+  $('#basesel').onchange = ()=>{ switchBase($('#basesel').value); };
+  refreshDescs(); fillClasses(); browse();
+}
+
+// ticking a descriptor fixes the base; the descriptors of the other base are greyed out
+function refreshDescs(){
+  const ticked = [...document.querySelectorAll('[data-d]:checked')];
+  if(ticked.length){ const b = ticked[0].closest('.desc').dataset.base; if(b!==state.base){ state.base=b; $('#basesel').value=b; fillClasses(); browse(); setQuery({}); } }
+  const lock = ticked.length>0;
+  document.querySelectorAll('.desc').forEach(row=>{
+    const off = lock && row.dataset.base!==state.base;
+    row.classList.toggle('off', off);
+    row.querySelectorAll('input').forEach(x=>x.disabled = off);
+  });
+  const up = !state.info.bases[state.base].thumbs_only;
+  $('#drop').classList.toggle('off', !up);
+  $('#drop').textContent = up ? 'Drop an image here or click to upload' : 'Uploads are not available for this base (its MPEG-7 signatures are precomputed): click an image below';
+}
+function switchBase(b){
+  state.base = b; $('#basesel').value = b;
+  document.querySelectorAll('[data-d]').forEach(x=>{ x.checked = x.closest('.desc').dataset.base===b && (DEFAULT_DESCS[b]||[]).includes(x.dataset.d); });
+  setQuery({}); refreshDescs(); fillClasses(); browse();
+}
+function fillClasses(){
+  const cl = state.info.bases[state.base].classes;
+  $('#cls').hidden = !cl.length;
+  $('#cls').innerHTML = '<option value="">All classes</option>'+cl.map(c=>`<option>${c}</option>`).join('');
+}
+
+async function browse(){
+  const r = await (await fetch(`/api/browse?n=24&base=${state.base}&label=${encodeURIComponent($('#cls').value)}&seed=${Math.floor(Math.random()*1e6)}`)).json();
+  $('#pickgrid').innerHTML = r.map(x=>`<button class="tile" data-id="${x.id}" title="${x.label}"><div class="im"><img loading="lazy" src="${img(x.id,200)}" alt="${x.label}"></div></button>`).join('');
+}
+$('#shuffle').onclick = browse; $('#cls').onchange = browse;
+$('#pickgrid').addEventListener('click', e=>{ const t=e.target.closest('.tile'); if(t) setQuery({id:+t.dataset.id}); });
+
+function setQuery({id=null,file=null}){
+  state.id=id; state.file=file;
+  const has = id!==null || file;
+  $('#qbox').hidden = !has;
+  $('#combwrap').hidden = !has;
+  if(has){
+    $('#qimg').src = file ? URL.createObjectURL(file) : img(id, 160);
+    $('#qname').textContent = file ? file.name : `image #${id} from the base`;
+  }
+  if(has) search();
+}
+$('#qclear').onclick = ()=>{ setQuery({}); };
+
+const drop=$('#drop'), fin=$('#file');
+const canUpload = ()=>!state.info.bases[state.base].thumbs_only;
+drop.onclick = ()=>{ if(canUpload()) fin.click(); };
+drop.onkeydown = e=>{ if((e.key==='Enter'||e.key===' ') && canUpload()) fin.click(); };
+fin.onchange = ()=>{ if(fin.files[0]) setQuery({file:fin.files[0]}); };
+['dragover','dragenter'].forEach(n=>drop.addEventListener(n,e=>{e.preventDefault();drop.classList.add('over')}));
+['dragleave','drop'].forEach(n=>drop.addEventListener(n,e=>{e.preventDefault();drop.classList.remove('over')}));
+drop.addEventListener('drop',e=>{ const f=e.dataTransfer.files[0]; if(f && canUpload()) setQuery({file:f}); });
+
+async function search(){
+  const descs = [...document.querySelectorAll('[data-d]:checked')].map(x=>x.dataset.d);
+  const weights = {}; document.querySelectorAll('[data-w]').forEach(r=>weights[r.dataset.w]=+r.value);
+  const kw = $('#kw').value.trim();
+  const out = $('#out');
+  if(state.id===null && !state.file && !kw){ out.innerHTML='<p class="err">Enter a keyword or choose a query image.</p>'; return; }
+  if(state.id!==null||state.file){ if(!descs.length){ out.innerHTML='<p class="err">Select at least one descriptor.</p>'; return; } }
+  const fd = new FormData();
+  fd.append('keywords', kw); fd.append('kw_mode', state.kwmode); fd.append('combine', state.combine);
+  fd.append('base', state.base);
+  if(state.file) fd.append('file', state.file); else if(state.id!==null) fd.append('image_id', state.id);
+  fd.append('descs', descs.join(',')); fd.append('weights', JSON.stringify(weights));
+  fd.append('metric', $('#metric').value); fd.append('k', $('#k').value); fd.append('method', $('#method').value);
+  $('#go').disabled = true;
+  try{
+    const res = await fetch('/api/search',{method:'POST',body:fd});
+    if(!res.ok) throw new Error((await res.json()).detail || res.statusText);
+    render(await res.json());
+  }catch(e){ out.innerHTML = `<p class="err">${e.message}</p>`; }
+  $('#go').disabled = false;
+}
+$('#go').onclick = search;
+$('#kw').addEventListener('keydown', e=>{ if(e.key==='Enter') search(); });
+
+function render(data){
+  const {info, results} = data;
+  const hasQ = state.id!==null || state.file;
+  const dmax = Math.max(...results.map(r=>r.distance), 1e-9), dmin = Math.min(...results.map(r=>r.distance));
+  let html = '';
+  if(hasQ){
+    const src = state.file ? $('#qimg').src : img(state.id, 360);
+    html += `<div class="tile q" style="max-width:240px;cursor:default;margin-bottom:22px"><div class="im"><img src="${src}" alt="query"></div><div class="meta"><div class="top"><span class="lab">Query</span><span class="rank">image</span></div></div></div>`;
+  }
+  const method = ({text:'keyword match', brute:'brute force', vptree:'VP-tree'}[info.method] || info.method)
+    + (info.text_engine==='elasticsearch' ? ' · keywords by Elasticsearch' : '');
+  const evals = info.method==='text' ? '' : ` · <b>${info.n_dist.toLocaleString()}</b> distance computations`;
+  const total = info.total_matches!==undefined ? ` of ${info.total_matches}` : '';
+  html += `<div class="head"><h2>${results.length}${total} result${results.length===1?'':'s'}</h2><div class="stats"><b>${info.time_ms} ms</b> · ${method}${evals}</div></div>`;
+  if(!results.length){ html += '<p class="empty">Nothing matches those keywords.</p>'; }
+  html += '<div class="grid">' + results.map((r,i)=>{
+    const sim = info.method==='text' ? 100 : Math.round(100 - 88*(r.distance - dmin)/Math.max(dmax - dmin, 1e-9));
+    const dtxt = info.method==='text' ? `score ${(r.score||0).toFixed(2)}` : `distance ${r.distance.toFixed(3)}`;
+    return `<button class="tile" data-id="${r.id}" title="${(r.tags||'').replace(/"/g,'')}"><div class="im"><img loading="lazy" src="${img(r.id,300)}" alt="${r.label}"></div>
+      <div class="meta"><div class="top"><span class="lab">${r.label==='unlabeled'?'(no tags)':r.label}</span><span class="rank">${i+1}</span></div>
+      ${info.method==='text'?'':`<div class="bar"><i style="width:${sim}%"></i></div>`}<div class="d">${dtxt}</div>
+      <div class="tags">${r.tags||''}</div></div></button>`;
+  }).join('') + '</div>';
+  $('#out').innerHTML = html;
+  window.scrollTo({top:0,behavior:'smooth'});
+}
+$('#out').addEventListener('click', e=>{ const t=e.target.closest('.tile:not(.q)'); if(t) setQuery({id:+t.dataset.id}); });
+init();
+</script>
+</body>
+</html>
