@@ -242,7 +242,7 @@ Dans l'interface :
 - Le menu **Image base** choisit la base. Ticker un descripteur **grise** ceux de l'autre base : un
   descripteur appartient à une seule base, on ne peut pas les mélanger.
 - **EHD / HTD** (MIRFLICKR) : cliquez une vignette. La **première recherche** construit l'arbre
-  (environ 11 s pour EHD) ; les suivantes durent moins d'une seconde.
+  (10 à 25 s pour EHD selon la machine) ; les suivantes durent moins d'une seconde.
 - Pas d'envoi de fichier sur MIRFLICKR (les signatures MPEG-7 sont déjà calculées) : cherchez à partir d'une
   image de la base.
 - **Keywords** : `sunglasses` (base MIRFLICKR) renvoie 1 184 images.
@@ -254,10 +254,25 @@ Dans l'interface :
 
 ## 5. Vérifier que tout fonctionne
 
+**Test automatique de la recherche** (serveur lancé dans un autre terminal) :
+
 ```bash
-python -m pytest -q tests                  # 23 tests, sans Elasticsearch ni base réelle
+python scripts/smoke_test.py
+```
+
+Il enchaîne 13 vérifications (recherche par image, par envoi de fichier, par mots-clés, ET image + mots-clés,
+recherche floue, base MIRFLICKR, refus du mélange HOG + EHD…), affiche `PASS` / `FAIL` pour chacune et se
+termine par `13/13 checks passed`. Les bases non chargées sont ignorées (`[skip]`), pas comptées en échec.
+
+Autres vérifications :
+
+```bash
+python -m pytest -q tests                  # 23 tests unitaires, sans Elasticsearch ni base réelle
 curl localhost:8000/api/info               # les bases chargées, leurs descripteurs et leurs classes
 ```
+
+> **PowerShell** : `curl` y est un alias de `Invoke-WebRequest`. Écrivez `curl.exe` pour les commandes de ce
+> guide (ou utilisez Git Bash).
 
 Mesures de qualité et de vitesse (rapport) :
 
@@ -282,7 +297,7 @@ Documentation interactive de l'API : **http://localhost:8000/docs**.
 | `address already in use` (port 8000) | Un autre serveur tourne : arrêtez-le ou ajoutez `--port 8001`. |
 | Les vignettes MIRFLICKR sont grises | Le zip des vignettes correspondant n'est pas dans `data/mirflickr_raw/` (voir §4.1), ou le serveur n'a pas été relancé après le téléchargement. |
 | La page affiche une ancienne version | Rechargement forcé du navigateur (Ctrl + F5). |
-| Premier appel lent (10 à 15 s) | Normal : construction du VP-tree pour cette combinaison de descripteurs. |
+| Premier appel lent (10 à 25 s) | Normal : construction du VP-tree pour cette combinaison de descripteurs. |
 | `docker compose up` : `elasticsearch` s'arrête (code 137 / 78) | Mémoire Docker insuffisante : allouez 4 Go à Docker Desktop (Settings, Resources), ou sous Linux `sysctl -w vm.max_map_count=262144`. |
 
 Tout remettre à zéro (les données du dépôt ne sont pas touchées) :

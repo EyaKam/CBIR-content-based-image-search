@@ -128,8 +128,9 @@ async def search(
     k = max(1, min(k, 200))
     dl = [d.strip() for d in descs.split(",") if d.strip()]
     has_file = file is not None and bool(file.filename)
-    base = resolve_base(dl, base)
-    eng = engine_of(base)
+    if image_id is not None or has_file or not base:
+        base = resolve_base(dl, base)       # the ticked descriptors decide the base
+    eng = engine_of(base)                   # keywords only + explicit base: descriptors are ignored
     rgb = None
     if has_file:
         rgb = D.decode_rgb(await file.read())
