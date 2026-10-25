@@ -1,306 +1,276 @@
+# 🔎 CBIR : moteur de recherche d'images par le contenu et par mots-clés
 
-# 🔎 Content-Based Image & Text Search Engine with MPEG-7, VGG16, VP-Tree, Elasticsearch, Logstash, FastAPI and Docker
+Moteur de recherche d'images développé pour l'atelier **« Indexation et recherche d'images par le contenu »**
+(SUP'COM). Il interroge **deux bases** : **Objects** (9 145 images, descripteurs calculés ici : couleur HSV, texture LBP,
+forme HOG, deep features VGG16) et **MIRFLICKR-1M** (1 000 000 d'images, descripteurs **MPEG-7** fournis, vignettes 64×64).
+On cherche par **l'image**, par **mots-clés**, ou par les deux. Les mots-clés sont stockés dans **Elasticsearch**
+(chargé par **Logstash**), les signatures sont comparées avec un **VP-tree**, le tout derrière une API **FastAPI**,
+une interface web et **Docker Compose**.
 
-This project is a **content-based image retrieval (CBIR) and keyword search engine** built for the workshop *"Indexation et recherche d'images par le contenu"*. It searches **two image bases**: the **Objects** base (descriptors computed here: colour histogram, LBP texture, HOG shape, optional **VGG16**) and the **1M MIRFLICKR** base (the provided **MPEG-7** descriptors, with its 64×64 thumbnails). Signatures are compared with a similarity metric and a **VP-tree** speeds up the search. **Elasticsearch** (loaded by **Logstash**) stores the tags and metadata of every image and answers keyword queries; **FastAPI** exposes the REST service, a **web client** lets users search, and **Docker** runs the stack.
+![Recherche dans MIRFLICKR-1M avec le descripteur EHD](docs/img/ui_mirflickr.jpg)
 
-> 📘 **Nouveau sur le projet ?** Le guide pas à pas (clone, installation, données, Elasticsearch, base 1M) est dans
-> [`docs/GUIDE_DEMARRAGE.md`](docs/GUIDE_DEMARRAGE.md).
+> 📘 **Faire tourner le projet :** le guide pas à pas (clone, installation, données, Elasticsearch, base 1M) est dans
+> [`docs/GUIDE_DEMARRAGE.md`](docs/GUIDE_DEMARRAGE.md) ([PDF](docs/GUIDE_DEMARRAGE.pdf)).
 
----
+## Sommaire
 
-## 📜 Table of Contents
+- [Fonctionnalités](#-fonctionnalités)
+- [Architecture et pipelines](#-architecture-et-pipelines)
+- [Les descripteurs](#-les-descripteurs)
+- [Démarrage rapide](#-démarrage-rapide)
+- [Résultats](#-résultats)
+- [API](#-api)
+- [Structure du dépôt](#-structure-du-dépôt)
+- [Choix de conception et limites](#-choix-de-conception-et-limites)
+- [Crédits](#-crédits)
 
-- [📂 Project Architecture](#-project-architecture)
-- [🚀 How It Works](#-how-it-works)
-  - [Descriptors (signatures)](#1-descriptors-signatures)
-  - [Index and VP-Tree](#2-index-and-vp-tree)
-  - [Keyword Search](#3-keyword-search)
-  - [FastAPI Backend](#4-fastapi-backend)
-  - [Web Interface](#5-web-interface)
-  - [Data: Objects base and 1M MIRFLICKR base](#6-data-objects-base-and-1m-mirflickr-base)
-- [📸 Features](#-features)
-- [🛠️ Technology Stack](#%EF%B8%8F-technology-stack)
-- [🔧 How to Run the Project](#-how-to-run-the-project)
-  - [Prerequisites](#prerequisites)
-  - [Install](#1-install)
-  - [Prepare the images](#2-prepare-the-images)
-  - [Offline phase: build the signatures](#3-offline-phase-build-the-signatures)
-  - [Load Elasticsearch with Logstash](#4-load-elasticsearch-with-logstash)
-  - [Online phase: run the server](#5-online-phase-run-the-server)
-  - [Access the Web Interface and API](#6-access-the-web-interface-and-api)
-- [📂 Folder Structure](#-folder-structure)
-- [🛡️ Environment Variables](#%EF%B8%8F-environment-variables)
-- [⚙️ How the Components Work Together](#%EF%B8%8F-how-the-components-work-together)
-- [🌐 REST API](#-rest-api)
-- [🧪 Evaluation and Tests](#-evaluation-and-tests)
-- [📊 Results](#-results)
-- [💡 Design Choices](#-design-choices)
+## ✨ Fonctionnalités
 
----
+- **Recherche par image** : une image de la base, un résultat précédent (un clic relance la recherche) ou un fichier envoyé (base Objects).
+- **Recherche par mots-clés** : tous les mots / un des mots, classement BM25 et tolérance aux fautes (Elasticsearch).
+- **Combinaison** mots-clés **ET / OU** image.
+- **Choix des descripteurs** et de leurs **poids**, de la **distance** (L1, L2, χ²) et de la **méthode** (VP-tree ou recherche exhaustive).
+- **Deux bases, une interface** : cocher un descripteur **grise** ceux de l'autre base (ils ne sont pas comparables entre eux).
+- **Recherche rapide** sur un million d'images grâce au VP-tree, avec comparaison chiffrée à la recherche exhaustive.
+- **Outils d'évaluation** : précision, rappel, AP, comparaison des distances, vitesse (`scripts/evaluate.py`).
 
-## 📂 **Project Architecture**
+## 🧭 Architecture et pipelines
 
+![Architecture](docs/img/fig_architecture.png)
+
+### Phase hors ligne : construire les signatures et les index
+
+```mermaid
+flowchart LR
+    subgraph OBJ["Base Objects · 9 145 images"]
+        direction LR
+        A1["Images<br/>data/Objects"] --> A2["Descripteurs<br/>HSV · LBP · HOG · VGG16"] --> A3[("index/*.npy<br/>signatures")]
+    end
+    subgraph MIR["Base MIRFLICKR-1M · 1 000 000 images"]
+        direction LR
+        B1["Archives zip<br/>MPEG-7 EHD · HTD + tags"] --> B2["import_mirflickr.py<br/>lecture sans extraction"] --> B3[("index_1m/*.npy<br/>signatures")]
+    end
+    A3 -. "objects.csv" .-> L["Logstash"]
+    B2 -- "tags.csv" --> L
+    L --> E[("Elasticsearch<br/>index objects · mirflickr")]
 ```
-OFFLINE (once)
-  Objects images ──► HSV / LBP / HOG (/ VGG16) ──► index/*.npy
-  MIRFLICKR zips ──► MPEG-7 EHD, HTD files    ──► index_1m/*.npy
-  tags (CSV files) ──► Logstash ──► Elasticsearch  (index objects, index mirflickr)
 
-ONLINE (every query)
-  Web client ──► FastAPI ──► keywords ──► Elasticsearch (BM25 / fuzzy)
-                         ──► image id / upload ──► signature of the query
-                                               ──► VP-tree or brute force over the .npy matrices
-                         ──► ranked ids + tags (Elasticsearch) + image URLs ──► Web client
+Les **signatures** (grandes matrices) restent dans des fichiers NumPy : le VP-tree en a besoin en mémoire.
+Les **informations de chaque image** (identifiant, chemin, étiquette, mots-clés) sont dans **Elasticsearch**.
+Les **images** restent dans des dossiers ; les vignettes de MIRFLICKR sont lues **directement dans les zips**
+(aucune extraction de 1 000 000 de petits fichiers).
+
+![Pipeline d'import MIRFLICKR](docs/img/fig_pipeline_import.png)
+
+![Chargement des tags par Logstash](docs/img/fig_pipeline_es.png)
+
+### Phase en ligne : traiter une requête
+
+```mermaid
+flowchart TD
+    Q["Requête<br/>mots-clés et/ou image"] --> R{"Descripteurs cochés :<br/>de quelle base ?"}
+    R -- "deux bases mélangées" --> X["Erreur 400"]
+    R -- "une seule base" --> S{"Type de requête"}
+    S -- "mots-clés seuls" --> ES["Elasticsearch<br/>match BM25 ou fuzzy"]
+    S -- "image seule" --> SIG["Signature de la requête"]
+    S -- "mots-clés + image" --> ES2["Elasticsearch<br/>filtre (ET) ou union (OU)"]
+    ES2 --> SIG
+    SIG --> D["Distances + VP-tree<br/>sur les matrices .npy"]
+    D --> ES3[("Elasticsearch<br/>tags des résultats")]
+    ES --> OUT["Résultats JSON<br/>id · distance · tags · URL"]
+    ES3 --> OUT
 ```
 
-**Where things are stored**
+### Déroulement d'une recherche par image
 
-| What | Where |
-|---|---|
-| Objects images | folder `data/Objects/` (one sub-folder per class) |
-| 1M thumbnails (64×64) | read directly from `thumbs*.zip`, never extracted |
-| Signatures | `index/*.npy` (Objects), `index_1m/*.npy` (MIRFLICKR) |
-| Tags, labels, paths (information about each image) | Elasticsearch indices `objects` and `mirflickr` |
+```mermaid
+sequenceDiagram
+    participant N as Navigateur
+    participant F as FastAPI
+    participant M as Moteur NumPy et VP-tree
+    participant E as Elasticsearch
+    N->>F: POST /api/search (descs, image_id, base)
+    F->>F: les descripteurs cochés déterminent la base
+    F->>M: signature de la requête, k plus proches voisins
+    M-->>F: identifiants et distances
+    F->>E: _mget des tags des résultats
+    E-->>F: tags
+    F-->>N: JSON des résultats
+    N->>F: GET /img/base/id
+    F-->>N: image du dossier ou vignette lue dans le zip
+```
 
-**A descriptor belongs to one base.** HSV, LBP, HOG and VGG16 search Objects; EHD and HTD search MIRFLICKR. Signatures of different descriptors live in different spaces and cannot be compared, so ticking a descriptor on the web page greys out the descriptors of the other base, and the API refuses a mix.
+### Un descripteur appartient à une seule base
 
-## 🚀 **How It Works**
+```mermaid
+flowchart LR
+    HSV --> OBJ[("Base Objects<br/>index/")]
+    LBP --> OBJ
+    HOG --> OBJ
+    VGG["VGG16"] --> OBJ
+    EHD --> MIR[("Base MIRFLICKR-1M<br/>index_1m/")]
+    HTD --> MIR
+```
 
-### 1. **Descriptors (signatures)**
-Every image becomes one or more vectors:
-- **HSV colour histogram** – 8×8×8 bins (512 dims), L1-normalised.
-- **LBP texture** – `nri_uniform`, P=8, R=1 (59 bins).
-- **HOG shape** – grey image resized to 128×64, 9 orientations, 8×8 cells, 2×2 blocks (3780 dims).
-- **VGG16 `fc1`** – 4096-dim deep feature, L2-normalised, compared with cosine similarity.
-- **MPEG-7** (Edge Histogram, Homogeneous Texture, …) – precomputed vectors provided with the 1M base, imported as they are.
+Les signatures de deux descripteurs différents n'ont ni la même taille ni le même sens : on ne les concatène jamais.
+Pour combiner plusieurs descripteurs **d'une même base**, chaque distance est divisée par sa valeur moyenne entre paires
+aléatoires, puis les distances sont additionnées avec les poids choisis (le résultat reste une métrique, donc le VP-tree reste valable).
 
-### 2. **Index and VP-Tree**
-- Signatures are saved once as NumPy matrices (`index/<descriptor>.npy`).
-- Distances: **L1, L2, χ²** (and cosine for VGG). Several descriptors can be combined with weights; each distance is divided by its mean pairwise distance so no descriptor dominates.
-- A **VP-tree** (vantage-point tree) avoids comparing the query with every image. Only true metrics are used with the tree.
+### Le VP-tree
 
-### 3. **Keyword Search (Elasticsearch + Logstash)**
-- Each image is a document `{id, path, label, tags}` in an Elasticsearch index (`objects`, `mirflickr`).
-- **Logstash** reads `index/objects.csv` and `index_1m/tags.csv` and loads them (`logstash/pipeline/*.conf`).
-- Elasticsearch ranks with **BM25** (`match`, all/any word) and `fuzzy` (typo tolerance).
-- A keyword query can be combined with an image query using **AND / OR**.
-- If Elasticsearch is not running, the Objects base falls back to an in-process BM25 index.
+Chaque nœud choisit un point de référence et la distance médiane μ : la moitié des points tombe à l'intérieur (d ≤ μ),
+l'autre à l'extérieur. Grâce à l'inégalité triangulaire, une recherche saute les sous-arbres qui ne peuvent pas contenir
+de meilleur voisin. La recherche reste **exacte**.
 
-### 4. **FastAPI Backend**
-- Computes (or looks up) the query signature, searches, and returns **JSON** with the image URLs, labels and distances.
-- Also answers the two requests of the reference project (`/search_by_text`, `/search_by_image/`) with the same JSON contract.
+![Principe du VP-tree](docs/img/fig_vptree.png)
 
-### 5. **Web Interface**
-- Type keywords and/or pick an image (from the base, from a previous result, or upload one).
-- Choose the descriptor(s), their weights, the distance, VP-tree or brute force, and the number of results.
-- Click any result to launch a new search from it.
+## 🧬 Les descripteurs
 
-### 6. **Data: Objects base and 1M MIRFLICKR base**
-- **Objects** (Caltech-101 style, one sub-folder per class, 9,145 images): descriptors are computed by `build_index.py`.
-- **1M MIRFLICKR** (from `press.liacs.nl/mirflickr`): the MPEG-7 descriptors are provided, so nothing is computed. `import_mirflickr.py` reads the zips directly (no extraction): Edge Histogram (150 dims), Homogeneous Texture (43 dims) and the tags. Only the 64×64 **thumbnails** are used for display instead of the ten 12 GB image archives. Image `imK.jpg` goes with descriptor/tag file `K-1`.
-- Only images already in the base can be queried in MIRFLICKR (no extractor for uploaded images).
+| Descripteur | Décrit | Taille | Base | Distance par défaut |
+|---|---|---:|---|---|
+| **HSV** | couleur (histogramme 8×8×8) | 512 | Objects | √χ² |
+| **LBP** | texture (59 motifs uniformes) | 59 | Objects | √χ² |
+| **HOG** | forme (gradients orientés, 128×64) | 3 780 | Objects | L2 |
+| **VGG16** | contenu sémantique (couche `fc1`) | 4 096 | Objects | L2 / cosinus (seuil 0,2) |
+| **EHD** | contours, MPEG-7 *Edge Histogram* | 150 | MIRFLICKR-1M | L1 |
+| **HTD** | texture, MPEG-7 *Homogeneous Texture* | 43 | MIRFLICKR-1M | L2 |
 
----
+![Les quatre signatures d'une image](docs/img/fig_signatures.png)
 
-## 📸 **Features**
+## 🚀 Démarrage rapide
 
-- **Image Similarity Search**: query by an image of the base, a previous result, or an uploaded image.
-- **Text-based Search**: keywords with BM25 ranking and fuzzy matching.
-- **Combined Search**: keywords AND/OR image.
-- **Choice of descriptors**: colour, texture, shape, deep features, MPEG-7, with weights.
-- **Fast search**: VP-tree compared with brute force (timings shown in the UI).
-- **Evaluation tools**: precision, recall, average precision, L1 vs L2 vs χ², speed benchmark.
-- **Client/Server + Docker**: web client, REST API, containerised deployment.
-
----
-
-## 🛠️ **Technology Stack**
-
-| Component              | Technology                              |
-|------------------------|-----------------------------------------|
-| **Deep features**      | VGG16 (Keras / TensorFlow)              |
-| **Classic descriptors**| OpenCV, scikit-image, NumPy             |
-| **Index structure**    | VP-tree (own implementation), NumPy     |
-| **Text search + metadata** | Elasticsearch 8.15 (BM25, fuzzy)    |
-| **Data ingestion**     | Logstash 8.15 (CSV → Elasticsearch)     |
-| **Backend API**        | FastAPI + Uvicorn                       |
-| **Frontend Interface** | HTML / CSS / JavaScript                 |
-| **Containerization**   | Docker, Docker Compose                  |
-
----
-
-## 🔧 **How to Run the Project**
-
-### Prerequisites
-- Python 3.10 – 3.12 (TensorFlow does not support 3.13+ yet) and, for Elasticsearch / Logstash, Docker and Docker Compose.
-- An image folder with one sub-folder per class (e.g. `Objects/`).
-
-### 1. **Install**
+Python **3.10 à 3.12** (TensorFlow ne fonctionne pas avec 3.13 et plus).
 
 ```bash
+git clone https://github.com/EyaKam/CBIR-content-based-image-search.git
+cd CBIR-content-based-image-search
+python -m venv .venv
+.venv\Scripts\activate            # Linux / macOS : source .venv/bin/activate
 pip install -r requirements.txt
 ```
-The first VGG16 use downloads the ImageNet weights (~530 MB, cached in `~/.keras`).
 
-### 2. **Prepare the images**
-
-```
-Objects/
-  airplanes/  butterfly/  faces/  brain/ ...
-```
-No images yet? Create a small synthetic base:
-```bash
-python scripts/make_demo_data.py --out data/Objects
-```
-
-### 3. **Offline phase: build the signatures**
+Placez les images de la base Objects dans `data/Objects/` (une archive `idb.zip` fournie par l'enseignant), puis :
 
 ```bash
-# Objects: descriptors computed here (add vgg to also compute VGG16, 530 MB weights download)
-python scripts/build_index.py --root data/Objects --desc hsv lbp hog
-
-# 1M MIRFLICKR: MPEG-7 descriptors + tags read from the zips in data/mirflickr_raw (about 5 minutes)
-python scripts/import_mirflickr.py --raw data/mirflickr_raw --index index_1m
+python scripts/build_index.py --root data/Objects --desc hsv lbp hog     # environ 40 s
+python -m uvicorn server:app --port 8000                                  # http://localhost:8000
 ```
-Download `features_edgehistogram.zip`, `features_homogeneoustexture.zip`, `tags.zip` and `thumbs*.zip` from `press.liacs.nl/mirflickr/mirdownload.html` into `data/mirflickr_raw/`.
 
-### 4. **Load Elasticsearch with Logstash**
+Test automatique (dans un autre terminal, serveur lancé) :
 
 ```bash
-docker compose up -d elasticsearch
-python scripts/create_es_indices.py                 # mappings of the indices objects and mirflickr
-python scripts/make_objects_csv.py --index index    # index/objects.csv
-docker compose run --rm logstash -f /usr/share/logstash/pipeline/objects.conf
-docker compose run --rm logstash -f /usr/share/logstash/pipeline/mirflickr.conf
-```
-On Windows with Git Bash, prefix the `docker compose run` commands with `MSYS_NO_PATHCONV=1`.
-
-### 5. **Online phase: run the server**
-
-```bash
-uvicorn server:app --host 0.0.0.0 --port 8000       # Elasticsearch on http://localhost:9200
-```
-Or everything in containers: `docker compose up -d --build cbir`.
-
-### 6. **Access the Web Interface and API**
-- **Web client:** [http://localhost:8000](http://localhost:8000)
-- **Swagger docs:** [http://localhost:8000/docs](http://localhost:8000/docs)
-
----
-
-## 📂 **Folder Structure**
-
-```
-├── server.py                 # FastAPI app: routes, image/thumbnail serving
-├── requirements.txt          # Python dependencies
-├── Dockerfile                # Image of the service
-├── docker-compose.yml        # Elasticsearch, Logstash (ingest profile), cbir
-├── logstash/pipeline/        # objects.conf, mirflickr.conf: CSV -> Elasticsearch
-│
-├── cbir/                     # Core library
-│   ├── config.py             # Paths, descriptor parameters, thresholds (env variables)
-│   ├── descriptors.py        # HSV, LBP, HOG, VGG16 descriptors
-│   ├── feature_extractor.py  # VGG16 fc1 feature extractor
-│   ├── distances.py          # L1, L2, chi2, cosine
-│   ├── vptree.py             # VP-tree index
-│   ├── textsearch.py         # In-process BM25 fallback when Elasticsearch is down
-│   ├── esclient.py           # Elasticsearch client (search, mget, mapping)
-│   ├── thumbs.py             # 1M thumbnails read from the zips
-│   ├── indexing.py           # Offline phase: scan images, compute signatures, save index
-│   └── engine.py             # Online phase: query -> distances -> ranked results
-│
-├── scripts/
-│   ├── build_index.py        # Build the index from an image folder
-│   ├── import_mirflickr.py   # 1M base: MPEG-7 descriptors + tags straight from the zips
-│   ├── import_features.py    # Index from any precomputed descriptor files
-│   ├── create_es_indices.py  # Elasticsearch mappings
-│   ├── make_objects_csv.py   # index/objects.csv for Logstash
-│   ├── evaluate.py           # Precision / recall / AP, metrics, speed
-│   ├── benchmark_scale.py    # VP-tree vs brute force as N grows
-│   └── make_demo_data.py     # Small synthetic image base
-│
-├── static/index.html         # Web client
-├── tests/                    # Unit tests (text search, VP-tree, VGG plumbing, API contract)
-├── data/                     # Image folders (not versioned)
-└── index/                    # Generated signatures + meta.json
+python scripts/smoke_test.py
 ```
 
----
+Pour ajouter VGG16, Elasticsearch/Logstash et la base MIRFLICKR-1M (environ 4 Go à télécharger avec
+`python scripts/download_mirflickr.py`), suivez les niveaux 2 à 4 du [guide de démarrage](docs/GUIDE_DEMARRAGE.md).
 
-## 🛡️ **Environment Variables**
+## 📊 Résultats
 
-```bash
-CBIR_IMAGE_ROOT=D:/path/to/Objects     # folder with the images
-CBIR_INDEX_DIR=index                   # Objects signatures
-CBIR_INDEX_1M_DIR=index_1m             # MIRFLICKR signatures
-CBIR_MIRFLICKR_RAW=data/mirflickr_raw  # folder with thumbs*.zip
-CBIR_ES_URL=http://localhost:9200      # Elasticsearch
-CBIR_TAGS_FILE=photo_metadata.csv      # optional keywords for build_index.py
-CBIR_VGG_THRESHOLD=0.2                 # minimum cosine similarity for a VGG-only query
-CBIR_WARMUP=1                          # preload VGG16 at start-up (0 to disable)
+### Qualité de la recherche (base Objects)
+
+200 requêtes tirées au hasard ; les images de la même classe sont pertinentes (la requête est exclue).
+
+| Descripteurs | P@10 | AP |
+|---|---:|---:|
+| HSV (couleur) | 0,260 | 0,290 |
+| LBP (texture) | 0,310 | 0,312 |
+| HOG (forme) | 0,422 | 0,433 |
+| **VGG16 (profond)** | **0,813** | **0,774** |
+| HSV + LBP + HOG + VGG16, poids égaux | 0,568 | 0,581 |
+
+- **VGG16 est de loin le meilleur.** Combiner les quatre descripteurs à poids égaux est **moins bon** que VGG16 seul : les trois
+  autres tirent le classement vers le bas ; les poids de l'interface servent à corriger cela.
+- **La distance compte** : sur cette base, L1 et √χ² font mieux que L2 pour HSV et HOG (HOG : AP 0,52 avec L1 contre 0,43 avec L2, valeur utilisée par défaut).
+
+Une même requête (butterfly), six résultats par descripteur. Cadre vert : même classe. HSV ramène des images de même couleur (le personnage Garfield), LBP échoue ici, HOG trouve des papillons de formes proches, VGG16 trouve des papillons de toutes couleurs.
+
+![Résultats par descripteur pour une requête butterfly](docs/img/fig_results_objects2.png)
+
+### VP-tree contre recherche exhaustive (k = 10, résultats identiques dans tous les cas)
+
+| Base · descripteur | Dimension | Distances calculées par le VP-tree | Temps par requête (exhaustive → VP-tree) |
+|---|---:|---:|---|
+| MIRFLICKR-1M · **HTD** | 43 | **5 %** (53 282 sur 1 000 000) | 134 ms → **56 ms** |
+| MIRFLICKR-1M · EHD | 150 | 40 % | 452 ms → 407 ms |
+| MIRFLICKR-1M · EHD + HTD | 193 | 32 % | 547 ms → 591 ms |
+| Objects · LBP | 59 | 24 % | 3,9 ms → 2,7 ms |
+| Objects · HOG, VGG16 | 3 780 · 4 096 | ≈ 100 % | plus lent que l'exhaustive |
+
+Le gain dépend fortement de la **dimension** : excellent à 43 dimensions, nul au-delà de quelques milliers
+(« malédiction de la dimension »). Avoir moins de distances à calculer ne garantit pas un temps plus court,
+car le parcours de l'arbre est écrit en Python.
+
+![Distances calculées par le VP-tree](docs/img/fig_chart_vptree.png)
+
+### Quelques exemples
+
+| Interface, base Objects (VGG16) | Mots-clés « sunglasses » (Elasticsearch) |
+|---|---|
+| ![](docs/img/ui_objects.jpg) | ![](docs/img/ui_keywords.jpg) |
+
+![Résultats MIRFLICKR avec EHD et HTD](docs/img/fig_results_mirflickr.png)
+
+## 🔌 API
+
+`POST /api/search` (multipart) : `keywords`, `kw_mode` (and/or), `combine` (and/or), `image_id` ou `file`, `base`
+(objects/mirflickr), `descs` (ex. `hsv,lbp,hog` ou `ehd`), `weights` (JSON), `metric` (default/l1/l2/chi2), `k`,
+`method` (vptree/brute). La base est déduite des descripteurs ; mélanger deux bases renvoie une erreur 400.
+
+| Route | Rôle |
+|---|---|
+| `GET /api/info` | bases, nombre d'images, classes, descripteurs |
+| `GET /api/browse?base=` | images aléatoires pour choisir une requête |
+| `GET /img/{base}/{id}` | image ou vignette |
+| `POST /search_by_text`, `POST /search_by_image/` | routes compatibles avec le projet de référence (base Objects) |
+
+Documentation interactive : `http://localhost:8000/docs`.
+
+## 🗂 Structure du dépôt
+
+```
+├── server.py                  # API FastAPI + service des images
+├── docker-compose.yml         # Elasticsearch, Logstash (profil ingest), application
+├── Dockerfile
+├── requirements.txt
+├── cbir/                      # bibliothèque
+│   ├── config.py              # bases, registre descripteur -> base, paramètres
+│   ├── descriptors.py         # HSV, LBP, HOG, VGG16
+│   ├── distances.py           # L1, L2, χ², cosinus
+│   ├── vptree.py              # VP-tree
+│   ├── indexing.py            # phase hors ligne (base Objects)
+│   ├── engine.py              # phase en ligne : requête -> résultats
+│   ├── esclient.py            # client Elasticsearch
+│   ├── thumbs.py              # vignettes lues dans les zips
+│   └── textsearch.py          # BM25 de secours sans Elasticsearch
+├── scripts/                   # build_index, import_mirflickr, download_mirflickr, create_es_indices,
+│                              # make_objects_csv, evaluate, smoke_test, benchmark_scale
+├── logstash/pipeline/         # objects.conf, mirflickr.conf
+├── static/index.html          # interface web
+├── tests/                     # 23 tests unitaires
+└── docs/                      # guide de démarrage (md + pdf) et figures
 ```
 
----
+Les images (`data/`) et les signatures (`index/`, `index_1m/`) ne sont pas versionnées : elles se reconstruisent avec les
+commandes du guide.
 
-## ⚙️ **How the Components Work Together**
+## ⚖️ Choix de conception et limites
 
-- **Descriptors:** convert each image into numerical signatures (once, offline).
-- **Index:** stores the signatures; the VP-tree organises them to prune the search.
-- **FastAPI:** receives the query, computes the query signature with the same descriptor, and returns the ranked results.
-- **Web client:** sends the query and displays the results; clicking one starts a new search.
-- **Docker:** packages the server, the VGG16 weights cache and the index volumes.
+- **Deux bases séparées** plutôt qu'un index unique : les descripteurs MPEG-7 et les nôtres ne vivent pas dans le même espace.
+- **Signatures en fichiers `.npy`, pas en base** : le VP-tree travaille sur la matrice en mémoire ; relire des lignes en base
+  à chaque recherche serait bien plus lent. Elasticsearch stocke ce qu'il fait bien : texte et métadonnées.
+- **Vignettes plutôt qu'images d'origine** pour MIRFLICKR-1M : la recherche n'a besoin que des signatures ; les pixels ne servent
+  qu'à l'affichage (10 archives de 12 Go évitées).
+- **Pas d'image envoyée sur MIRFLICKR-1M** : nous n'avons pas d'extracteur MPEG-7 ; on cherche à partir d'une image de la base.
+- **5,4 % des images de MIRFLICKR-1M n'ont aucun tag** (53 887) : elles ne sont trouvables que par leur contenu visuel.
+- **VP-tree inefficace en grande dimension** (HOG, VGG16) ; première requête d'une combinaison : 10 à 25 s de construction de l'arbre.
+- Le service `cbir` de `docker-compose.yml` n'a pas été testé ; Elasticsearch et Logstash, eux, tournent dans Docker.
 
----
+## 🙏 Crédits
 
-## 🌐 **REST API**
+- Cours « Indexation et recherche d'images par le contenu », R. Tébourbi, SUP'COM.
+- Base **MIRFLICKR-1M** : M. J. Huiskes, M. S. Lew, *The MIR Flickr Retrieval Evaluation*, ACM MIR 2008 (<https://press.liacs.nl/mirflickr/>).
+- VGG16 : K. Simonyan, A. Zisserman (poids ImageNet de Keras).
+- Projet de référence pour le contrat d'API : *ImageText-Search-ElasticVGG-Docker*.
 
-`POST /api/search` (multipart): `keywords, kw_mode (and|or), combine (and|or), image_id | file, base (objects|mirflickr), descs=hsv,lbp,hog,vgg | ehd,htd, weights={"hsv":1}, metric (default|l1|l2|chi2), k, method (vptree|brute), threshold`
-→ `{info, results:[{id, path, label, tags, distance}]}`. The base is deduced from `descs`; mixing descriptors of two bases returns 400.
-
-Other routes: `GET /api/info`, `GET /api/browse?base=`, `GET /img/{base}/{id}?w=300` (image / thumbnail), `POST /search_by_text`, `POST /search_by_image/` (Objects base).
-
----
-
-## 🧪 **Evaluation and Tests**
-
-```bash
-python scripts/evaluate.py --queries 200 --out results   # P@k, R@k, AP, L1 vs L2 vs chi2, speed
-python scripts/benchmark_scale.py                         # VP-tree vs N and dimension
-python -m pytest -q tests
-```
-Relevant = same class as the query (leave-one-out).
-
----
-
-## 📊 **Results**
-
-### Global Interface Description
-The web page offers keyword search and image search side by side, with the descriptor choices, weights and distance options, and a result grid that shows each image with its distance.
-
-<!-- add screenshot: images/interface.png -->
-
-### 🔍 Search Features
-
-#### Search by Text
-- Enter keywords; all-words or any-word matching, with BM25 ranking.
-
-<!-- add screenshot: images/text.png -->
-
-#### Search by Image
-- Pick an image of the base or upload one; results are ranked by similarity with the selected descriptors.
-
-<!-- add screenshot: images/image.png -->
-
-#### Evaluation
-<!-- add precision/recall curve: results/precision_recall.png and the metrics tables -->
-
----
-
-## 💡 **Design Choices**
-
-- **VGG16 + cosine** captures semantics; HSV, LBP and HOG capture colour, texture and contours. They are compared in the evaluation and can be combined.
-- **HSV 8×8×8**, **LBP nri_uniform (59 bins)**, **HOG 128×64 with 3780 dims**.
-- **Metrics used with the VP-tree**: √χ², L1 and L2 satisfy the triangle inequality; KL divergence and histogram intersection do not.
-- **Combining descriptors**: each distance is normalised by its mean pairwise distance, then weighted-summed.
-- **Keywords + image**: AND = keyword matches ranked by visual similarity; OR = union of the best visual and keyword matches.
-- **1M base**: precomputed MPEG-7 vectors plus thumbnails for display; queries by image id and keywords.
+Auteur : Eya Kammoun · Encadrant : Riadh Tébourbi
