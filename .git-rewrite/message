@@ -1,0 +1,11 @@
+Moteur de recherche d'images: Objects + MIRFLICKR-1M, Elasticsearch, Logstash
+
+- Deux bases: Objects (HSV, LBP, HOG, VGG16 calcules) et MIRFLICKR-1M (MPEG-7 EHD/HTD,
+  vignettes lues dans les zips); un descripteur appartient a une seule base
+- Recherche par image (distances L1/L2/chi2/cosinus, VP-tree) et par mots-cles (Elasticsearch,
+  charge par Logstash), combinables en ET / OU
+- API FastAPI, interface web (descripteurs de l'autre base grises), Docker Compose
+- Scripts: build_index, import_mirflickr, download_mirflickr, create_es_indices, evaluate
+- Rapport Word et guide de demarrage (docs/GUIDE_DEMARRAGE.md)
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
